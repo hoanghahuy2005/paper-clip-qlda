@@ -1,0 +1,40 @@
+# Mẫu task và ba cổng
+
+## Task giai đoạn (giao cho trưởng phòng)
+
+- Mục tiêu, dự án, phiên bản Brief/Kế hoạch, trưởng phòng phụ trách.
+- Đầu vào có link và phiên bản, phụ thuộc, đầu ra và nơi bàn giao (đường dẫn trong thư mục dự án).
+- Tiêu chí đạt, hạn (giờ Việt Nam), ngân sách phòng (VND).
+- Việc tốn phí: trần chi phí mỗi shot, số lần thử Kling (mặc định 2, AI Production Lead nâng tối đa 4 và ghi lý do).
+- Yêu cầu trưởng phòng tự chia task con và báo lại khi xong hoặc khi có lỗi cấp 3 trở lên.
+
+## Ba cổng mặc định
+
+| Cổng | Gói kiểm tra | Review | Duyệt |
+| --- | --- | --- | --- |
+| G1 — Tiền kỳ | Kịch bản, storyboard, shot list, bộ tham chiếu nhân vật và bối cảnh | QA Reviewer | **CEO** |
+| G2 — Footage | Clip theo mã shot, tính đồng nhất, lỗi hình AI, chi phí so với trần | QA Reviewer | **Yan** |
+| G3 — Video cuối | Bản dựng, phụ đề, âm thanh, file xuất | QA Reviewer | **CEO** |
+
+Nếu Kế hoạch đã duyệt ghi khác thì làm theo Kế hoạch. Chỉ coi cổng đạt khi Paperclip ghi nhận quyết định duyệt cho đúng phiên bản đầu ra.
+
+## Mẫu `executionPolicy` cho task cổng
+
+Thay ID bằng ID thực đã xác minh. Ví dụ cổng G1:
+
+```json
+{
+  "executionPolicy": {
+    "mode": "normal",
+    "commentRequired": true,
+    "stages": [
+      { "type": "review",   "approvalsNeeded": 1,
+        "participants": [ { "type": "agent", "agentId": "<QA_REVIEWER_ID>" } ] },
+      { "type": "approval", "approvalsNeeded": 1,
+        "participants": [ { "type": "user",  "userId":  "<CEO_USER_ID>" } ] }
+    ]
+  }
+}
+```
+
+G2 thay participant của stage `approval` bằng `{ "type": "agent", "agentId": "<YAN_ID>" }`, nhưng Yan không được đồng thời là người thực hiện task đó.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sally — Video Scriptwriter"
+  short_description: "Shape stories through spoken reads and clear scene plans"
+  default_prompt: "Use $video-scriptwriter as Sally to develop this video's story in my voice, test it aloud, and prepare narration with a clear scene handoff. Keep brainstorming in conversation until I approve the spine or ask you to write it up."

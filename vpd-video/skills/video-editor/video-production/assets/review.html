@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Video review</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#101216;color:#f3f5f7}
+*{box-sizing:border-box}body{margin:0}main{max-width:1200px;margin:auto;padding:clamp(16px,3vw,36px)}header{margin-bottom:24px}.eyebrow{text-transform:uppercase;letter-spacing:.15em;color:#a9b8c9;font-size:.75rem}h1{font-weight:650;font-size:clamp(1.5rem,4vw,2.4rem);margin:8px 0}.muted{color:#aab3bf;font-size:.92rem;line-height:1.5}.controls{display:flex;gap:14px;flex-wrap:wrap;margin:18px 0}label{display:grid;gap:6px;color:#c6cdd6;font-size:.85rem;flex:1;min-width:140px}select,button,.download,textarea{font:inherit;color:#f3f5f7;background:#20252e;border:1px solid #465060;border-radius:8px;padding:10px 12px}select{width:100%;min-width:0}button,.download{cursor:pointer;text-decoration:none}button:hover,.download:hover{background:#303947}button:focus-visible,select:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid #87bfff;outline-offset:3px}button:disabled{opacity:.45;cursor:default}.stage{background:#06080b;border:1px solid #303640;border-radius:12px;display:flex;justify-content:center;overflow:hidden;min-height:150px}video{display:block;width:100%;max-height:72vh;object-fit:contain}video.portrait{width:auto;max-width:100%;height:72vh}.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:14px 0}.actions label{display:flex;align-items:center;flex:0 0 auto;min-width:0;padding:10px 4px}.actions input{accent-color:#87bfff}#candidate-label{margin-bottom:8px;font-weight:550}.chapters{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.chapters button{font-size:.8rem}#status{min-height:1.5em}textarea{width:100%;min-height:90px;resize:vertical;margin-top:10px}[hidden]{display:none!important}footer{border-top:1px solid #303640;padding-top:14px;margin-top:26px}a{color:#a8ceff}@media(max-width:540px){main{padding:16px}label{min-width:110px}.controls{gap:10px}.actions{gap:8px}.actions button,.download{padding:10px;font-size:.85rem}video,video.portrait{max-height:62vh}video.portrait{height:62vh}}
+h1,#candidate-label,#status{overflow-wrap:anywhere}
+</style>
+</head>
+<body>
+<main>
+<header><div class="eyebrow">Video review</div><h1 id="title"></h1><div class="muted">Switch format or music at the same moment. A different timeline starts at the beginning.</div></header>
+<div class="controls">
+<label>Cut<select id="cut"></select></label>
+<label>Format<select id="aspect"></select></label>
+<label>Music<select id="music"></select></label>
+</div>
+<div id="candidate-label"></div>
+<div class="stage"><video id="video" controls playsinline preload="metadata"></video></div>
+<div class="actions">
+<label><input id="captions" type="checkbox">Captions</label>
+<a id="download" class="download" download>Download video</a>
+<a id="caption-download" class="download" download hidden>Download captions</a>
+<button id="feedback" type="button">Copy feedback reference</button>
+</div>
+<div id="chapters" class="chapters" aria-label="Scene chapters"></div>
+<div id="status" class="muted" role="status" aria-live="polite"></div>
+<textarea id="feedback-text" aria-label="Feedback reference to copy" readonly hidden></textarea>
+<footer class="muted">One video contains the complete mix for each choice. Keep this page, media and captions together when moving the review. Local playback does not establish access from a phone or remote session.</footer>
+</main>
+<script id="review-data" type="application/json">__REVIEW_MANIFEST__</script>
+<script>
+"use strict";
+const review=JSON.parse(document.getElementById("review-data").textContent);
+const byId=id=>document.getElementById(id);
+const video=byId("video"), cut=byId("cut"), aspect=byId("aspect"), music=byId("music"), captionToggle=byId("captions"), status=byId("status");
+let current=null, captionURL=null, pending=null, serial=0;
+const cutKey=c=>JSON.stringify([c.timeline,c.revision]);
+const unique=values=>[...new Set(values)];
+const urlPath=path=>path.split("/").map(encodeURIComponent).join("/");
+const clock=seconds=>{const whole=Math.floor(seconds||0);return `${Math.floor(whole/60)}:${String(whole%60).padStart(2,"0")}.${String(Math.floor(((seconds||0)-whole)*10))}`;};
+function options(select,values,selected,label=value=>value){select.replaceChildren();for(const value of values){const item=document.createElement("option");item.value=value;item.textContent=label(value);select.append(item);}select.value=selected;select.disabled=values.length<2;}
+function syncControls(){
+ const cuts=unique(review.candidates.map(cutKey));
+ options(cut,cuts,cutKey(current),value=>{const [timeline,revision]=JSON.parse(value);return `${revision} · ${timeline}`;});
+ const group=review.candidates.filter(c=>cutKey(c)===cutKey(current));
+ options(aspect,unique(group.map(c=>c.aspect)),current.aspect);
+ options(music,unique(group.filter(c=>c.aspect===current.aspect).map(c=>c.music)),current.music);
+}
+function syncCaptions(){for(const track of video.textTracks)track.mode=captionToggle.checked?"showing":"hidden";}
+function choose(candidate){
+ if(current?.id===candidate.id)return;
+ const same=current?.timeline===candidate.timeline;
+ const position=same?(pending?.time??video.currentTime):0;
+ const playing=pending?.playing??(!video.paused&&!video.ended);
+ current=candidate; const token=++serial;
+ pending={time:position,playing};video.pause();video.replaceChildren();
+ if(captionURL){URL.revokeObjectURL(captionURL);captionURL=null;}
+ video.classList.toggle("portrait",candidate.aspect==="9:16");
+ byId("candidate-label").textContent=`${candidate.label} · ${candidate.revision} · ${candidate.aspect} · ${candidate.music}`;
+ byId("feedback-text").hidden=true;byId("feedback-text").value="";
+ captionToggle.disabled=!candidate.captions;
+ byId("caption-download").hidden=!candidate.captions;
+ if(candidate.captions){
+  captionURL=URL.createObjectURL(new Blob([candidate.captions.text],{type:"text/vtt;charset=utf-8"}));
+  const track=document.createElement("track");track.kind="captions";track.label=candidate.captions.label;track.srclang=candidate.captions.language;track.src=captionURL;track.default=true;video.append(track);track.addEventListener("load",()=>{if(token===serial)syncCaptions();});
+  byId("caption-download").href=urlPath(candidate.captions.path);
+ }
+ byId("download").href=urlPath(candidate.path);
+ byId("chapters").replaceChildren();
+ for(const chapter of candidate.chapters){const button=document.createElement("button");button.type="button";button.textContent=`${clock(chapter.start)} ${chapter.label}`;button.addEventListener("click",()=>{video.currentTime=chapter.start;if(pending)pending.time=chapter.start;});byId("chapters").append(button);}
+ status.textContent=same?"Keeping your position in this timeline.":"Ready at the beginning of this timeline.";
+ syncControls();
+ video.onloadedmetadata=()=>{
+  if(token!==serial)return;
+  const state=pending;pending=null;
+  video.currentTime=Math.min(state.time,Math.max(0,video.duration-0.05));syncCaptions();
+  if(state.playing)video.play().catch(()=>{status.textContent="Press play to continue; the browser paused playback.";});
+ };
+ video.onerror=()=>{if(token===serial){pending=null;status.textContent="Video could not load. Keep the bundle together and try the local review server or another supported browser.";}};
+ video.src=urlPath(candidate.path);video.load();
+}
+cut.addEventListener("change",()=>{const group=review.candidates.filter(c=>cutKey(c)===cut.value);choose(group.find(c=>c.aspect===current.aspect&&c.music===current.music)||group.find(c=>c.aspect===current.aspect)||group[0]);});
+aspect.addEventListener("change",()=>{const group=review.candidates.filter(c=>cutKey(c)===cutKey(current)&&c.aspect===aspect.value);choose(group.find(c=>c.music===current.music)||group[0]);});
+music.addEventListener("change",()=>choose(review.candidates.find(c=>cutKey(c)===cutKey(current)&&c.aspect===current.aspect&&c.music===music.value)));
+captionToggle.addEventListener("change",syncCaptions);
+byId("feedback").addEventListener("click",async()=>{
+ const time=video.currentTime||0;const chapter=[...current.chapters].reverse().find(c=>c.start<=time);
+ const text=`${review.title}\nRevision: ${current.revision}\nCandidate: ${current.id} (${current.aspect}, ${current.music})\nTimeline: ${current.timeline}\nScene: ${chapter?`${chapter.id} — ${chapter.label}`:"not chaptered"}\nTime: ${clock(time)}\nFeedback: `;
+ const field=byId("feedback-text");field.value=text;field.hidden=false;
+ try{await navigator.clipboard.writeText(text);status.textContent="Feedback reference copied. Add your note.";}catch{field.focus();field.select();status.textContent="Select and copy the feedback reference below.";}
+});
+byId("title").textContent=review.title;document.title=`${review.title} — Video review`;
+choose(review.candidates.find(c=>c.id===review.selected)||review.candidates[0]);
+</script>
+</body>
+</html>

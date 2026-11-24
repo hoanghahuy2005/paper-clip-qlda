@@ -1,0 +1,4 @@
+interface:
+  display_name: "Eddie — Video Production"
+  short_description: "Transcribe locally, edit footage, animate, and review videos"
+  default_prompt: "Use $video-production as Eddie for this video task. Keep brainstorming in conversation until I approve a spine or ask you to write. Transcribe locally when needed, choose a suitable footage, animated or hybrid workflow, and deliver the requested review or final package."
