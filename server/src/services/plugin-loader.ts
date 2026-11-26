@@ -1489,6 +1489,11 @@ export function pluginLoader(
       );
     }
 
+    const addedCapabilities = manifest.capabilities.filter(capability => !plugin.manifestJson.capabilities.includes(capability));
+    if (addedCapabilities.length > 0) {
+      throw new Error(`Plugin ${plugin.pluginKey} capabilities require approval: ${addedCapabilities.join(", ")}`);
+    }
+
     assertPackageActivation?.({ packageRoot, installedPackagePath: plugin.packagePath, pluginKey: plugin.pluginKey, manifest, previousManifest: plugin.manifestJson });
     if (isDeepStrictEqual(manifest, plugin.manifestJson)) {
       return plugin;
@@ -1881,7 +1886,8 @@ export function pluginLoader(
      * This method:
      * 1. Fetches and validates the new plugin package using `fetchAndValidate`.
      * 2. Ensures the new manifest ID matches the existing plugin ID for safety.
-     * 3. Updates the plugin record in the registry with the new version and manifest.
+     * 3. Returns the candidate to the lifecycle manager; this method does not
+     *    change the persisted capability grant.
      *
      * @param pluginId - The UUID of the plugin to upgrade.
      * @param upgradeOptions - Options for the upgrade (packageName, localPath, version).
@@ -1931,30 +1937,8 @@ export function pluginLoader(
         );
       }
 
-      // 3. Detect capability escalation — new capabilities not in the old manifest
-      const oldCaps = new Set(oldManifest.capabilities ?? []);
-      const newCaps = newManifest.capabilities ?? [];
-      const escalated = newCaps.filter((c) => !oldCaps.has(c));
-
-      if (escalated.length > 0) {
-        log.warn(
-          { pluginId, escalated, oldVersion: oldManifest.version, newVersion: newManifest.version },
-          "plugin-loader: upgrade introduces new capabilities — requires admin approval",
-        );
-        throw new Error(
-          `Upgrade for "${pluginId}" introduces new capabilities that require approval: ${escalated.join(", ")}. ` +
-            `The previous version declared [${[...oldCaps].join(", ")}]. ` +
-            `Please review and approve the capability escalation before upgrading.`,
-        );
-      }
-
-      // 4. Update the existing record
-      await registry.update(pluginId, {
-        packageName: discovered.packageName,
-        version: discovered.version,
-        manifest: newManifest,
-      });
-
+      // The lifecycle manager owns the approval transition and commits the
+      // manifest only after an explicit admin approval of this exact candidate.
       return {
         oldManifest,
         newManifest,

@@ -11,7 +11,7 @@ import { queryKeys } from "@/lib/queryKeys";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const fixture = vi.hoisted(() => ({ attention: vi.fn(), summary: vi.fn(), openNewIssue: vi.fn(), pathname: "/COO/issues", search: "", userId: "reviewer" as string | null, chats: [] as Array<{ id?: string; conversationAgentId?: string; updatedAt?: string; isUnreadForMe: boolean }>,
-  recentTasks: [] as Array<Record<string, unknown>>, taskSummaries: [] as Array<Record<string, unknown>>, projects: [] as Array<Record<string, unknown>>, projectTasks: vi.fn(), enableCases: false, enableResponsibilities: false, agents: [] as Agent[] }));
+  recentTasks: [] as Array<Record<string, unknown>>, taskSummaries: [] as Array<Record<string, unknown>>, projects: [] as Array<Record<string, unknown>>, projectTasks: vi.fn(), enableCases: false, enableResponsibilities: false, agents: [] as Agent[], pluginVisible: false }));
 vi.mock("@/hooks/useCoordinatorWorkspaceEnabled", () => ({ useCoordinatorWorkspaceEnabled: () => ({ enabled: true, userId: fixture.userId }) }));
 vi.mock("@/hooks/useAgentChatNavigation", () => ({ useAgentChatNavigation: () => ({
   companyId: "company", userId: fixture.userId, agents: { data: fixture.agents }, chats: { data: fixture.chats }, session: { isSuccess: true },
@@ -26,6 +26,9 @@ vi.mock("@/api/attention", () => ({ attentionApi: { list: fixture.attention, sum
 vi.mock("@/api/instanceSettings", () => ({ instanceSettingsApi: { getExperimental: async () => ({ enableCases: fixture.enableCases, enableResponsibilities: fixture.enableResponsibilities }) } }));
 vi.mock("@/api/projects", () => ({ projectsApi: { list: async () => fixture.projects } }));
 vi.mock("./SidebarCompanyMenu", () => ({ SidebarCompanyMenu: () => null }));
+vi.mock("@/context/CompanyContext", () => ({ useCompany: () => ({ selectedCompanyId: "company", selectedCompany: { id: "company", issuePrefix: "COO" } }) }));
+vi.mock("@/plugins/slots", () => ({ PluginSlotOutlet: ({ context, slotTypes }: { context: { companyId?: string | null; companyPrefix?: string | null }; slotTypes: string[] }) =>
+  fixture.pluginVisible && slotTypes.includes("sidebar") ? <a href={`/${context.companyPrefix}/office`} data-company-id={context.companyId ?? ""}>Office</a> : null }));
 vi.mock("@/lib/router", () => ({
   useLocation: () => ({ pathname: fixture.pathname, search: fixture.search }),
   Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => <a href={to} {...props}>{children}</a>,
@@ -49,7 +52,7 @@ function summary(items: AttentionItem[], mineCount = items.length) {
 let root: Root, container: HTMLDivElement, client: QueryClient;
 beforeEach(() => {
   vi.clearAllMocks(); localStorage.clear(); fixture.userId = "reviewer"; fixture.pathname = "/COO/issues"; fixture.search = "";
-  fixture.chats = []; fixture.recentTasks = []; fixture.taskSummaries = []; fixture.projects = []; fixture.enableCases = false; fixture.enableResponsibilities = false; fixture.agents = [];
+  fixture.chats = []; fixture.recentTasks = []; fixture.taskSummaries = []; fixture.projects = []; fixture.enableCases = false; fixture.enableResponsibilities = false; fixture.agents = []; fixture.pluginVisible = false;
   fixture.summary.mockResolvedValue(summary([pending("question"), pending("review")]));
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -355,6 +358,21 @@ describe("Coordinator pinned pages", () => {
   });
 });
 afterEach(async () => { await act(async () => root.unmount()); client.clear(); container.remove(); });
+it("mounts the sidebar outlet once with company context and preserves existing navigation", async () => {
+  fixture.pluginVisible = true;
+  await renderSidebar();
+  const office = container.querySelector<HTMLAnchorElement>('a[href="/COO/office"]');
+  expect(office?.getAttribute("data-company-id")).toBe("company");
+  expect(container.querySelectorAll('a[href="/COO/office"]')).toHaveLength(1);
+  expect(container.querySelector('a[href="/chats"]')).not.toBeNull();
+  expect(container.querySelector('button[aria-label="More workspace pages"]')).not.toBeNull();
+  fixture.pluginVisible = false;
+  await renderSidebar();
+  expect(container.querySelector('a[href="/COO/office"]')).toBeNull();
+  fixture.pluginVisible = true;
+  await renderSidebar();
+  expect(container.querySelectorAll('a[href="/COO/office"]')).toHaveLength(1);
+});
 async function flush() { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); }); }
 async function renderSidebar() {
   await act(async () => root.render(<QueryClientProvider client={client}><TooltipProvider><CoordinatorSidebar /></TooltipProvider></QueryClientProvider>));

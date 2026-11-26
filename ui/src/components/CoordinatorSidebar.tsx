@@ -11,6 +11,8 @@ import { useRecentTaskOpenWarmup } from "@/hooks/useRecentTaskOpenWarmup";
 import { usePinnedNavigation } from "@/hooks/usePinnedNavigation";
 import { useDialogActions } from "@/context/DialogContext";
 import { useSidebar } from "@/context/SidebarContext";
+import { useCompany } from "@/context/CompanyContext";
+import { PluginSlotOutlet } from "@/plugins/slots";
 import { queryKeys } from "@/lib/queryKeys";
 import type { RecentTaskEntry } from "@/lib/recent-tasks";
 import { Link, useLocation } from "@/lib/router";
@@ -132,6 +134,7 @@ function RecentNavigationList({ children }: { children: ReactNode }) {
  * or task just because someone visits or switches agents. */
 export function CoordinatorSidebar({ children }: { children?: ReactNode }) {
   const { companyId, userId, agents, chats, session } = useAgentChatNavigation();
+  const { selectedCompany } = useCompany();
   const unreadChatCount = chats.data?.filter(chat => chat.isUnreadForMe).length ?? 0;
   const pinnedNavigation = usePinnedNavigation(userId);
   const pinKeys = useMemo(() => new Set(pinnedNavigation.pins), [pinnedNavigation.pins]);
@@ -229,6 +232,11 @@ export function CoordinatorSidebar({ children }: { children?: ReactNode }) {
               </div>)}
           </FlyoutContent>
         </Flyout>
+        <PluginSlotOutlet
+          slotTypes={["sidebar"]}
+          context={{ companyId, companyPrefix: selectedCompany?.issuePrefix ?? null }}
+          className="design-sidebar-primary"
+        />
       </div>
       {pinnedNavigation.error && <p role="alert" className="px-4 py-2 text-xs text-destructive">{pinnedNavigation.error}</p>}
       {session.isSuccess && recents.length > 0 && <div className="design-sidebar-recents"><SidebarSection label="Recents" collapsible={{ open: recentsOpen, onOpenChange: setRecentsOpen }}>
