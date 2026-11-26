@@ -3,8 +3,11 @@ import express from "express";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
+  agents,
+  approvals,
   companies,
   createDb,
+  issues,
   pluginJobRuns,
   pluginJobs,
   pluginLogs,
@@ -51,7 +54,7 @@ type Actor = {
   isInstanceAdmin: boolean;
 };
 
-function buildApp(actor: Actor, db: ReturnType<typeof createDb>) {
+function buildApp(actor: Actor, db: ReturnType<typeof createDb>, worker?: unknown) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -66,7 +69,7 @@ function buildApp(actor: Actor, db: ReturnType<typeof createDb>) {
       { jobStore: pluginJobStore(db) } as never,
       undefined,
       undefined,
-      undefined,
+      worker ? { workerManager: worker } as never : undefined,
     ),
   );
   app.use(errorHandler);
@@ -111,6 +114,38 @@ describeEmbeddedPostgres("plugin operational reads are company-scoped", () => {
     memberships: [],
     isInstanceAdmin: true,
   };
+
+  it("does not reveal hidden work or private approval references to a restricted board actor", async () => {
+    const officeId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const approvalId = randomUUID();
+    await db.insert(plugins).values({
+      id: officeId, pluginKey: "vpd-office-poc", packageName: "@test/office", version: "0.1.0",
+      apiVersion: 1, categories: ["ui"], manifestJson: { capabilities: ["issues.read"] } as never, status: "ready",
+    });
+    await db.insert(agents).values({ id: agentId, companyId: companyA, name: "Test agent" });
+    const worker = {
+      call: async (_id: string, _method: string, input: { companyId: string; params: { companyId: string } }) => {
+        expect(input.params.companyId).toBe(input.companyId);
+        return { companyId: input.companyId, agents: [{ id: agentId }], approvals: [{ id: approvalId }] };
+      },
+    };
+    const restricted = buildApp(boardA, db, worker);
+    const admin = buildApp({ ...instanceAdmin, companyIds: [companyA] }, db, worker);
+    const endpoint = `/api/plugins/${officeId}/data/office-snapshot`;
+    const body = { companyId: companyA, params: { companyId: companyB } };
+    const before = await request(restricted).post(endpoint).send(body).expect(200);
+    expect(before.body.data.workload).toEqual({});
+    await db.insert(issues).values({ id: issueId, companyId: companyA, title: "Private task", status: "todo", visibility: "private", assigneeAgentId: agentId });
+    await db.insert(approvals).values({ id: approvalId, companyId: companyA, type: "request_board_approval", payload: { issueId } });
+    const after = await request(restricted).post(endpoint).send(body).expect(200);
+    expect(after.body).toEqual(before.body);
+    expect(after.body.data.approvals).toEqual([]);
+    const privileged = await request(admin).post(endpoint).send(body).expect(200);
+    expect(privileged.body.data.workload).toEqual({ [agentId]: "busy" });
+    await request(restricted).post(endpoint).send({ companyId: companyB }).expect(403);
+  });
 
   beforeAll(async () => {
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-plugin-operational-reads-");
@@ -176,6 +211,9 @@ describeEmbeddedPostgres("plugin operational reads are company-scoped", () => {
     await db.delete(pluginJobs);
     await db.delete(pluginLogs);
     await db.delete(plugins);
+    await db.delete(approvals);
+    await db.delete(issues);
+    await db.delete(agents);
     await db.delete(companies);
     await db.$client.end({ timeout: 1 }).catch(() => {});
     await tempDb?.cleanup();
