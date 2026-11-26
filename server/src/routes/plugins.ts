@@ -25,6 +25,7 @@ import { randomUUID } from "node:crypto";
 import { pluginApiUpgrade, proxyPluginApiWebSocket } from "../realtime/plugin-api-ws.js";
 import { trustedBoardMutationOrigin } from "../middleware/board-mutation-guard.js";
 import { authorizationService } from "../services/authorization.js";
+import { readOfficeWorkload } from "../services/office-workload.js";
 import { fileURLToPath } from "node:url";
 import { Router } from "express";
 import type { Request, Response } from "express";
@@ -47,6 +48,7 @@ import type {
 } from "@paperclipai/shared";
 import {
   PLUGIN_STATUSES,
+  isUuidLike,
 } from "@paperclipai/shared";
 import { pluginRegistryService } from "../services/plugin-registry.js";
 import { pluginLifecycleManager } from "../services/plugin-lifecycle.js";
@@ -774,6 +776,27 @@ export function pluginRoutes(
     return companyId;
   }
 
+  function officeSnapshotScope(pluginKey: string, key: string, companyId: string | undefined) {
+    if (pluginKey !== "vpd-office-poc" || key !== "office-snapshot") return false;
+    if (!companyId || !isUuidLike(companyId)) throw badRequest("Office requires a company scope");
+    return true;
+  }
+
+  async function attachOfficeWorkload(req: Request, companyId: string, result: unknown) {
+    const snapshot = result as { companyId: string; agents?: { id?: unknown }[]; approvals?: { id?: unknown }[] } | null;
+    if (!snapshot || snapshot.companyId !== companyId || !Array.isArray(snapshot.agents)) {
+      throw new Error("Invalid Office snapshot scope");
+    }
+    const ids = snapshot.agents.slice(0, 200).flatMap(agent =>
+      typeof agent?.id === "string" && isUuidLike(agent.id) ? [agent.id] : []);
+    const approvals = Array.isArray(snapshot.approvals) ? snapshot.approvals : [];
+    const approvalIds = approvals.flatMap(approval =>
+      typeof approval?.id === "string" && isUuidLike(approval.id) ? [approval.id] : []);
+    const { workload, handoffs, meetings, visibleApprovals } = await readOfficeWorkload(db, req.actor, companyId, ids, approvalIds);
+    const allowed = new Set<unknown>(visibleApprovals.map(approval => approval.id));
+    return { ...snapshot, workload, handoffs, meetings, approvals: approvals.filter(approval => allowed.has(approval?.id)) };
+  }
+
   function requirePluginConfigCompanyId(req: Request, companyId: unknown): string {
     if (typeof companyId !== "string" || companyId.trim().length === 0) {
       throw badRequest('"companyId" is required and must be a non-empty string');
@@ -1483,6 +1506,7 @@ export function pluginRoutes(
     }
 
     const companyId = assertPluginBridgeScope(req, body.companyId);
+    const office = officeSnapshotScope(plugin.pluginKey, body.key, companyId);
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -1491,11 +1515,12 @@ export function pluginRoutes(
         {
           key: body.key,
           ...(companyId ? { companyId } : {}),
-          params: body.params ?? {},
+          params: office ? { companyId } : body.params ?? {},
           renderEnvironment: body.renderEnvironment ?? null,
         },
       );
-      res.json({ data: result });
+      if (office) res.set("Cache-Control", "private, no-store");
+      res.json({ data: office ? await attachOfficeWorkload(req, companyId!, result) : result });
     } catch (err) {
       const bridgeError = mapRpcErrorToBridgeError(err);
       attachPluginBridgeErrorContext(req, res, err, bridgeError, {
@@ -1670,6 +1695,7 @@ export function pluginRoutes(
     } | undefined;
 
     const companyId = assertPluginBridgeScope(req, body?.companyId);
+    const office = officeSnapshotScope(plugin.pluginKey, key, companyId);
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -1678,11 +1704,12 @@ export function pluginRoutes(
         {
           key,
           ...(companyId ? { companyId } : {}),
-          params: body?.params ?? {},
+          params: office ? { companyId } : body?.params ?? {},
           renderEnvironment: body?.renderEnvironment ?? null,
         },
       );
-      res.json({ data: result });
+      if (office) res.set("Cache-Control", "private, no-store");
+      res.json({ data: office ? await attachOfficeWorkload(req, companyId!, result) : result });
     } catch (err) {
       const bridgeError = mapRpcErrorToBridgeError(err);
       attachPluginBridgeErrorContext(req, res, err, bridgeError, {
@@ -2333,6 +2360,51 @@ export function pluginRoutes(
       const message = err instanceof Error ? err.message : String(err);
       res.status(400).json({ error: message });
     }
+  });
+
+  router.get("/plugins/:pluginId/upgrade-preview", async (req, res) => {
+    assertInstanceAdmin(req);
+    assertPluginManagementVisible();
+    const plugin = await resolvePlugin(registry, req.params.pluginId);
+    if (!plugin) { res.status(404).json({ error: "Plugin not found" }); return; }
+    try { res.json(await lifecycle.previewUpgrade(plugin.id)); }
+    catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  router.post("/plugins/:pluginId/approve-upgrade", async (req, res) => {
+    assertInstanceAdmin(req);
+    assertPluginManagementVisible();
+    const plugin = await resolvePlugin(registry, req.params.pluginId);
+    if (!plugin) { res.status(404).json({ error: "Plugin not found" }); return; }
+    const digest = req.body?.expectedManifestDigest;
+    if (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest)) {
+      res.status(400).json({ error: "expectedManifestDigest must be a SHA-256 hex digest" }); return;
+    }
+    try {
+      const result = await lifecycle.approveUpgrade(plugin.id, digest);
+      await logPluginMutationActivity(req, "plugin.upgraded", plugin.id, {
+        pluginId: plugin.id, pluginKey: plugin.pluginKey, previousVersion: plugin.version,
+        version: result.version, approvedManifestDigest: digest,
+      });
+      publishGlobalLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "upgraded" } });
+      res.json(result);
+    } catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  router.post("/plugins/:pluginId/cancel-upgrade", async (req, res) => {
+    assertInstanceAdmin(req);
+    assertPluginManagementVisible();
+    const plugin = await resolvePlugin(registry, req.params.pluginId);
+    if (!plugin) { res.status(404).json({ error: "Plugin not found" }); return; }
+    try {
+      const result = await lifecycle.cancelUpgrade(plugin.id);
+      await logPluginMutationActivity(req, "plugin.upgraded", plugin.id, {
+        pluginId: plugin.id, pluginKey: plugin.pluginKey, previousVersion: plugin.version,
+        version: result.version, cancelled: true,
+      });
+      publishGlobalLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "upgraded" } });
+      res.json(result);
+    } catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
   });
 
   // ===========================================================================

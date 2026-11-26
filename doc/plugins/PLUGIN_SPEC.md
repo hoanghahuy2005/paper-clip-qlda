@@ -1672,11 +1672,11 @@ Plugin upgrades do not automatically migrate plugin state. If a plugin's `value_
 
 When upgrading a plugin:
 
-1. The host sends `shutdown()` to the old worker.
-2. The host waits for the old worker to drain in-flight work (respecting the shutdown deadline).
-3. Any in-flight jobs that do not complete within the deadline are marked `cancelled`.
-4. The host installs the new version and starts the new worker.
-5. If the new version adds capabilities, the plugin enters `upgrade_pending` and the operator must approve before the new worker becomes `ready`.
+1. The host validates the candidate package and manifest before stopping the old worker.
+2. The host sends `shutdown()` to the old worker and waits for in-flight work to drain (respecting the shutdown deadline). Any unfinished jobs are marked `cancelled`.
+3. If the candidate adds capabilities, the plugin enters `upgrade_pending`; the persisted manifest and capability grant remain unchanged, and the new worker stays stopped.
+4. An instance administrator reads `GET /api/plugins/:pluginId/upgrade-preview` and approves that exact manifest digest with `POST /api/plugins/:pluginId/approve-upgrade` (`expectedManifestDigest`). Only then does the host persist the new manifest and start its worker.
+5. If the package is restored to the installed manifest, the administrator may use `POST /api/plugins/:pluginId/cancel-upgrade` to return to `ready`. Re-enable does not approve a pending upgrade. An upgrade with no added capabilities transitions directly to `ready`.
 
 ### 25.4 Hot Plugin Lifecycle
 
