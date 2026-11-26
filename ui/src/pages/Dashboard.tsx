@@ -29,6 +29,7 @@ import { cn, formatCents } from "../lib/utils";
 import { SHOW_TASK_PRIORITY_UI } from "../lib/ui-flags";
 import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle } from "lucide-react";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
+import { AgentMetricsPanel } from "../components/AgentMetricsPanel";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { QueryErrorState, useQueryView } from "../components/QueryView";
@@ -469,6 +470,8 @@ export function Dashboard() {
           </div>
 
           <SmokeLabDashboardCard companyId={selectedCompanyId!} />
+
+          {accountSettled && <AgentMetricsPanel key={JSON.stringify([selectedCompanyId, accountUserId])} companyId={selectedCompanyId!} viewerId={accountUserId ?? null} />}
 
           <div className={cn("grid grid-cols-2 gap-4", SHOW_TASK_PRIORITY_UI ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
             <ChartCard title="Run Activity" subtitle="Last 14 days">

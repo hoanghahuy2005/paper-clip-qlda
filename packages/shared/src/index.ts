@@ -1441,6 +1441,7 @@ export type {
   LiveDeliveryServerMessage,
   DashboardRunActivityDay,
   DashboardSummary,
+  DashboardAgentMetric,
   TimelineActorType,
   TimelineEventKind,
   TimelineEdgeKind,

@@ -52,3 +52,27 @@ export interface DashboardSummary {
   };
   runActivity: DashboardRunActivityDay[];
 }
+
+/** All-time, read-only counters for agents visible to the current board actor. */
+export interface DashboardAgentMetric {
+  agentId: string;
+  name: string;
+  status: string;
+  /** Current readable execution tasks assigned to this agent. */
+  assignedTasks: number;
+  /** Current readable execution tasks assigned to this agent and marked done. */
+  completedTasks: number;
+  /** Distinct readable execution tasks with at least one run by this agent. */
+  tasksRun: number;
+  /** Run counts, not distinct task counts. */
+  succeededRuns: number;
+  failedRuns: number;
+  /** Accounted ledger usage; input excludes cached input. */
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  pointsEarned: number;
+  pointsDeducted: number;
+  netPoints: number;
+  efficiencyPercent: number | null;
+}
