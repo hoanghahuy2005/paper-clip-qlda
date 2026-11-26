@@ -10,6 +10,13 @@ export type OfficeSnapshot = {companyId:string;generatedAt:string;agents:OfficeA
 };
 export type RosterEntry = {deskId:string;agent:OfficeAgent|null;issue:OfficeIssue|null;run:OfficeIssue["activeRun"];state:"unknown"|"idle"|"working"|"error"|"paused"};
 
+/** Titles come only from the actor-scoped, current Office snapshot. */
+export function visibleAgentIssues(snapshot:OfficeSnapshot|null, freshness:string, agentId:string):OfficeIssue[]{
+  if(!snapshot||freshness!=="active"||snapshot.issueAccess!=="available")return [];
+  return snapshot.issues.filter(issue=>issue.assigneeAgentId===agentId&&! ["done","cancelled"].includes(issue.status))
+    .sort((a,b)=>Number(b.activeRun?.agentId===agentId&&b.activeRun.status==="running")-Number(a.activeRun?.agentId===agentId&&a.activeRun.status==="running"));
+}
+
 function normalize(s:string){return s.toLowerCase().replace(/[^a-z0-9]+/g,"").trim();}
 const aliases:Record<string,string[]>={pm:["Yan","Project Manager","PM"],creative_director:["Creative Director"],scriptwriter:["Scriptwriter"],shot_planner:["Shot Planner"],ai_production_lead:["AI Production Lead"],character_consistency:["Character & Consistency"],visual_generator:["Visual Generator"],voice_audio:["Voice & Audio"],video_editor:["Video Editor"],motion_subtitle:["Motion & Subtitle"],color_sound:["Color & Sound Mix"],qa_reviewer:["QA Reviewer"]};
 

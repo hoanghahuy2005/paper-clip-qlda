@@ -3,7 +3,7 @@ import test from "node:test";
 import { buildSync } from "esbuild";
 import { fileURLToPath } from "node:url";
 const bundled=buildSync({entryPoints:[fileURLToPath(new URL("../src/business.ts",import.meta.url))],bundle:true,write:false,platform:"node",format:"esm"}).outputFiles[0].text;
-const { resolveRoster, newCeoDelivery, acceptNewerSnapshot, canRest, updateIdleSince, idleToLoungeDelayMs } = await import(`data:text/javascript;base64,${Buffer.from(bundled).toString("base64")}`);
+const { resolveRoster, newCeoDelivery, acceptNewerSnapshot, canRest, updateIdleSince, idleToLoungeDelayMs, visibleAgentIssues } = await import(`data:text/javascript;base64,${Buffer.from(bundled).toString("base64")}`);
 
 const agent=(id,name,title=null,metadata=null)=>({id,name,title,metadata,role:"agent",status:"idle",reportsTo:null});
 const snapshot=(companyId,agents=[],issues=[],approvals=[])=>({companyId,generatedAt:new Date().toISOString(),agents,issues,approvals,approvalAccess:"available"});
@@ -34,6 +34,16 @@ test("snapshot reconciliation rejects delayed and invalid responses",()=>{
   assert.equal(acceptNewerSnapshot(first,old),first);
   assert.equal(acceptNewerSnapshot(first,invalid),first);
   const other=snapshot("B");assert.equal(acceptNewerSnapshot(first,other),other);
+});
+
+test("task titles use only current readable assigned issues and prioritize the running task",()=>{
+  const issue=(id,owner,status="todo",run=null)=>({id,title:id,status,assigneeAgentId:owner,activeRun:run});
+  const a={...snapshot("A",[agent("yan","Yan")],[issue("queued","yan"),issue("foreign","other"),issue("done","yan","done"),issue("running","yan","in_progress",{agentId:"yan",status:"running"})]),issueAccess:"available"};
+  assert.deepEqual(visibleAgentIssues(a,"active","yan").map(item=>item.id),["running","queued"]);
+  assert.deepEqual(visibleAgentIssues({...a,issues:[issue("new","yan")]},"active","yan").map(item=>item.id),["new"]);
+  assert.equal(visibleAgentIssues(a,"stale","yan").length,0);
+  assert.equal(visibleAgentIssues({...a,issueAccess:"unavailable"},"active","yan").length,0);
+  assert.equal(visibleAgentIssues(null,"active","yan").length,0);
 });
 
 test("lounge timer requires an authoritative zero and resets for competing work or loss of data", () => {
