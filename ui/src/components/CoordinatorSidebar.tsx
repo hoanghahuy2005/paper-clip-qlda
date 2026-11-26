@@ -232,11 +232,6 @@ export function CoordinatorSidebar({ children }: { children?: ReactNode }) {
               </div>)}
           </FlyoutContent>
         </Flyout>
-        <PluginSlotOutlet
-          slotTypes={["sidebar"]}
-          context={{ companyId, companyPrefix: selectedCompany?.issuePrefix ?? null }}
-          className="design-sidebar-primary"
-        />
       </div>
       {pinnedNavigation.error && <p role="alert" className="px-4 py-2 text-xs text-destructive">{pinnedNavigation.error}</p>}
       {session.isSuccess && recents.length > 0 && <div className="design-sidebar-recents"><SidebarSection label="Recents" collapsible={{ open: recentsOpen, onOpenChange: setRecentsOpen }}>
@@ -255,6 +250,12 @@ export function CoordinatorSidebar({ children }: { children?: ReactNode }) {
               </SidebarProjectTasks>)}
         </RecentNavigationList>
       </SidebarSection></div>}
+      <PluginSlotOutlet
+        slotTypes={["sidebar"]}
+        pluginKey="vpd-office-poc"
+        context={{ companyId, companyPrefix: selectedCompany?.issuePrefix ?? null }}
+        className="design-sidebar-primary"
+      />
       {children}
     </nav>
   </aside></TruncatedTextMarqueeProvider></FlyoutAppearanceProvider>;

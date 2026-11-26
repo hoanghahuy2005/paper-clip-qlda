@@ -27,8 +27,8 @@ vi.mock("@/api/instanceSettings", () => ({ instanceSettingsApi: { getExperimenta
 vi.mock("@/api/projects", () => ({ projectsApi: { list: async () => fixture.projects } }));
 vi.mock("./SidebarCompanyMenu", () => ({ SidebarCompanyMenu: () => null }));
 vi.mock("@/context/CompanyContext", () => ({ useCompany: () => ({ selectedCompanyId: "company", selectedCompany: { id: "company", issuePrefix: "COO" } }) }));
-vi.mock("@/plugins/slots", () => ({ PluginSlotOutlet: ({ context, slotTypes }: { context: { companyId?: string | null; companyPrefix?: string | null }; slotTypes: string[] }) =>
-  fixture.pluginVisible && slotTypes.includes("sidebar") ? <a href={`/${context.companyPrefix}/office`} data-company-id={context.companyId ?? ""}>Office</a> : null }));
+vi.mock("@/plugins/slots", () => ({ PluginSlotOutlet: ({ context, slotTypes, pluginKey }: { context: { companyId?: string | null; companyPrefix?: string | null }; slotTypes: string[]; pluginKey?: string }) =>
+  fixture.pluginVisible && slotTypes.includes("sidebar") && pluginKey === "vpd-office-poc" ? <a href={`/${context.companyPrefix}/office`} data-company-id={context.companyId ?? ""}>Office</a> : null }));
 vi.mock("@/lib/router", () => ({
   useLocation: () => ({ pathname: fixture.pathname, search: fixture.search }),
   Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => <a href={to} {...props}>{children}</a>,
@@ -366,6 +366,7 @@ it("mounts the sidebar outlet once with company context and preserves existing n
   expect(container.querySelectorAll('a[href="/COO/office"]')).toHaveLength(1);
   expect(container.querySelector('a[href="/chats"]')).not.toBeNull();
   expect(container.querySelector('button[aria-label="More workspace pages"]')).not.toBeNull();
+  expect(container.querySelector('a[href="/COO/office"]')!.compareDocumentPosition(container.querySelector('button[aria-label="More workspace pages"]')!) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
   fixture.pluginVisible = false;
   await renderSidebar();
   expect(container.querySelector('a[href="/COO/office"]')).toBeNull();

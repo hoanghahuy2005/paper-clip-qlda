@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { agents, companies, createDb, heartbeatRuns } from "@paperclipai/db";
+import { activityLog, agents, companies, createDb, heartbeatRuns, issues } from "@paperclipai/db";
+import express from "express";
+import request from "supertest";
+import { dashboardRoutes } from "../routes/dashboard.js";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -48,13 +51,44 @@ describeEmbeddedPostgres("dashboard service", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(activityLog);
     await db.delete(heartbeatRuns);
+    await db.delete(issues);
     await db.delete(agents);
     await db.delete(companies);
   });
 
   afterAll(async () => {
     await tempDb?.cleanup();
+  });
+
+  it("records a quality error once, caps deductions per task, and rejects a mismatched task", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    await db.insert(companies).values({ id: companyId, name: "Quality", issuePrefix: "QUAL" });
+    await db.insert(agents).values({ id: agentId, companyId, name: "Editor", role: "engineer",
+      adapterType: "codex_local", adapterConfig: {}, runtimeConfig: {}, permissions: {} });
+    await db.insert(issues).values([
+      { companyId, title: "Reviewed task", identifier: "QUAL-1", assigneeAgentId: agentId, status: "done" },
+      { companyId, title: "Clean task", identifier: "QUAL-2", assigneeAgentId: agentId, status: "done" },
+      { companyId, title: "Different assignment", identifier: "QUAL-3", status: "done" },
+    ]);
+    const app = express().use(express.json()).use((req, _res, next) => {
+      req.actor = { type: "board", source: "local_implicit" };
+      next();
+    }).use(dashboardRoutes(db));
+    const base = `/companies/${companyId}/dashboard`;
+    const submission = { submissionId: randomUUID(), agentId, task: "qual-1", severity: "light", reason: "Missed required format" };
+    await request(app).post(`${base}/agent-errors`).send(submission).expect(200);
+    await request(app).post(`${base}/agent-errors`).send(submission).expect(200);
+    await request(app).post(`${base}/agent-errors`).send({ ...submission, submissionId: randomUUID(), task: "QUAL-3" }).expect(404);
+    const first = await request(app).get(`${base}/agents`).expect(200);
+    expect(first.body.agents[0]).toMatchObject({ pointsEarned: 200, pointsDeducted: 10, netPoints: 190, efficiencyPercent: 95 });
+    for (const severity of ["medium", "severe", "severe", "severe"]) {
+      await request(app).post(`${base}/agent-errors`).send({ ...submission, submissionId: randomUUID(), severity }).expect(200);
+    }
+    const final = await request(app).get(`${base}/agents`).expect(200);
+    expect(final.body.agents[0]).toMatchObject({ completedTasks: 2, pointsEarned: 200, pointsDeducted: 100, netPoints: 100, efficiencyPercent: 50 });
   });
 
   it("selects distinct task cards before limiting and keeps taskless runs separate", async () => {

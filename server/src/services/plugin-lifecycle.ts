@@ -36,7 +36,6 @@
  * @see PLUGIN_SPEC.md §12.5 — Graceful Shutdown Policy
  */
 import { EventEmitter } from "node:events";
-import { createHash } from "node:crypto";
 import type { Db } from "@paperclipai/db";
 import type {
   PluginStatus,
@@ -146,7 +145,7 @@ export interface PluginLifecycleManager {
   load(pluginId: string): Promise<PluginRecord>;
 
   /**
-   * Enable a plugin that is in `disabled` or `error` state.
+   * Enable a plugin that is in `disabled`, `error`, or `upgrade_pending` state.
    * Transitions → `ready`.
    */
   enable(pluginId: string): Promise<PluginRecord>;
@@ -187,15 +186,6 @@ export interface PluginLifecycleManager {
    * Otherwise, transitions to `ready` directly.
    */
   upgrade(pluginId: string, version?: string): Promise<PluginRecord>;
-
-  /** Re-read the pending package so an admin can review its exact capabilities. */
-  previewUpgrade(pluginId: string): Promise<{ version: string; addedCapabilities: string[]; manifestDigest: string }>;
-
-  /** Approve the exact manifest digest reviewed by an instance admin. */
-  approveUpgrade(pluginId: string, expectedManifestDigest: string): Promise<PluginRecord>;
-
-  /** Restore a pending upgrade after the package has been rolled back to the installed manifest. */
-  cancelUpgrade(pluginId: string): Promise<PluginRecord>;
 
   /**
    * Start the worker process for a plugin that is already in `ready` state.
@@ -353,10 +343,6 @@ export function pluginLifecycleManager(
     return plugin as PluginRecord;
   }
 
-  function manifestDigest(manifest: PluginRecord["manifestJson"]): string {
-    return createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
-  }
-
   function assertTransition(plugin: PluginRecord, to: PluginStatus): void {
     if (!isValidTransition(plugin.status, to)) {
       throw badRequest(
@@ -501,7 +487,7 @@ export function pluginLifecycleManager(
 
     // -- enable -----------------------------------------------------------
     /**
-     * enable — Re-enables a plugin that was previously disabled or in error.
+     * enable — Re-enables a plugin that was previously in an error or upgrade state.
      *
      * Similar to load(), this method transitions the plugin to 'ready' and starts
      * its worker, but it specifically targets plugins that are currently disabled.
@@ -512,11 +498,11 @@ export function pluginLifecycleManager(
     async enable(pluginId: string): Promise<PluginRecord> {
       const plugin = await requirePlugin(pluginId);
 
-      // Pending upgrades require an explicit approval or a verified rollback.
-      if (plugin.status !== "disabled" && plugin.status !== "error") {
+      // Only allow enabling from disabled, error, or upgrade_pending states
+      if (plugin.status !== "disabled" && plugin.status !== "error" && plugin.status !== "upgrade_pending") {
         throw badRequest(
           `Cannot enable plugin in status '${plugin.status}'. ` +
-          `Plugin must be in 'disabled' or 'error' status to be enabled.`,
+            `Plugin must be in 'disabled', 'error', or 'upgrade_pending' status to be enabled.`,
         );
       }
 
@@ -655,8 +641,8 @@ export function pluginLifecycleManager(
      * managing the lifecycle state transition.
      *
      * Following PLUGIN_SPEC.md §25.3, the upgrade process:
-     * 1. Fetches and validates the new plugin package via the `PluginLoader`.
-     * 2. Stops the current worker process (if running).
+     * 1. Stops the current worker process (if running).
+     * 2. Fetches and validates the new plugin package via the `PluginLoader`.
      * 3. Compares the capabilities declared in the new manifest against the old one.
      * 4. If new capabilities are added, transitions the plugin to `upgrade_pending`
      *    to await operator approval (worker stays stopped).
@@ -684,8 +670,9 @@ export function pluginLifecycleManager(
         "plugin lifecycle: upgrade requested",
       );
 
-      // Validate before stopping the old worker. A rejected candidate must
-      // leave the currently approved plugin running.
+      await deactivatePluginRuntime(pluginId, plugin.pluginKey);
+
+      // 1. Download and validate new package via loader
       const { oldManifest, newManifest, discovered } =
         await pluginLoaderInstance.upgradePlugin(pluginId, { version });
 
@@ -704,11 +691,9 @@ export function pluginLifecycleManager(
         (cap) => !oldManifest.capabilities.includes(cap),
       );
 
-      await deactivatePluginRuntime(pluginId, plugin.pluginKey);
-
       // 3. Transition state
       if (addedCaps.length > 0) {
-        // Keep the old manifest grant in the registry while review is pending.
+        // New capabilities require operator approval — worker stays stopped
         log.info(
           { pluginId, pluginKey: plugin.pluginKey, addedCaps },
           "plugin lifecycle: new capabilities detected, transitioning to upgrade_pending",
@@ -721,13 +706,11 @@ export function pluginLifecycleManager(
         });
         return result;
       } else {
-        const updated = await registry.update(pluginId, {
-          packageName: discovered.packageName,
+        const result = await transition(pluginId, "ready", null, {
+          ...plugin,
           version: discovered.version,
-          manifest: newManifest,
-        });
-        if (!updated) throw notFound(`Plugin not found after upgrade: ${pluginId}`);
-        const result = await transition(pluginId, "ready", null, updated as PluginRecord);
+          manifestJson: newManifest,
+        } as PluginRecord);
         await activateReadyPlugin(pluginId);
         afterConnectorPluginActivated(pluginId, result.pluginKey);
 
@@ -742,53 +725,6 @@ export function pluginLifecycleManager(
 
         return result;
       }
-    },
-
-    async previewUpgrade(pluginId: string) {
-      const plugin = await requirePlugin(pluginId);
-      if (plugin.status !== "upgrade_pending") throw badRequest("Plugin is not awaiting upgrade approval");
-      const { newManifest } = await pluginLoaderInstance.upgradePlugin(pluginId, {});
-      return {
-        version: newManifest.version,
-        addedCapabilities: newManifest.capabilities.filter(cap => !plugin.manifestJson.capabilities.includes(cap)),
-        manifestDigest: manifestDigest(newManifest),
-      };
-    },
-
-    async approveUpgrade(pluginId: string, expectedManifestDigest: string) {
-      const plugin = await requirePlugin(pluginId);
-      if (plugin.status !== "upgrade_pending") throw badRequest("Plugin is not awaiting upgrade approval");
-      const { newManifest, discovered } = await pluginLoaderInstance.upgradePlugin(pluginId, {});
-      const added = newManifest.capabilities.filter(cap => !plugin.manifestJson.capabilities.includes(cap));
-      if (added.length === 0 || manifestDigest(newManifest) !== expectedManifestDigest) {
-        throw badRequest("Pending plugin manifest changed; review the upgrade again");
-      }
-      const updated = await registry.update(pluginId, {
-        packageName: discovered.packageName,
-        version: discovered.version,
-        manifest: newManifest,
-      });
-      if (!updated) throw notFound(`Plugin not found after approval: ${pluginId}`);
-      const result = await transition(pluginId, "ready", null, updated as PluginRecord);
-      await activateReadyPlugin(pluginId);
-      afterConnectorPluginActivated(pluginId, result.pluginKey);
-      emitDomain("plugin.loaded", { pluginId, pluginKey: result.pluginKey });
-      emitDomain("plugin.enabled", { pluginId, pluginKey: result.pluginKey });
-      return result;
-    },
-
-    async cancelUpgrade(pluginId: string) {
-      const plugin = await requirePlugin(pluginId);
-      if (plugin.status !== "upgrade_pending") throw badRequest("Plugin is not awaiting upgrade approval");
-      const { newManifest } = await pluginLoaderInstance.upgradePlugin(pluginId, {});
-      if (manifestDigest(newManifest) !== manifestDigest(plugin.manifestJson)) {
-        throw badRequest("Restore the installed plugin package before cancelling its upgrade");
-      }
-      const result = await transition(pluginId, "ready", null, plugin);
-      await activateReadyPlugin(pluginId);
-      afterConnectorPluginActivated(pluginId, result.pluginKey);
-      emitDomain("plugin.enabled", { pluginId, pluginKey: result.pluginKey });
-      return result;
     },
 
     // -- startWorker ------------------------------------------------------

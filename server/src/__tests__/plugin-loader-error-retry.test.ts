@@ -182,29 +182,6 @@ describe("pluginLoader.loadAll error retry", () => {
     }
   });
 
-  it("rejects local plugin capability escalation during re-enable before changing the registry", async () => {
-    const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "local-plugin-escalation-")));
-    try {
-      const packageRoot = path.join(root, "plugin");
-      mkdirSync(path.join(packageRoot, "dist"), { recursive: true });
-      const plugin = createPluginRecord({ status: "ready", packagePath: packageRoot });
-      const replacement = { ...plugin.manifestJson, categories: ["ui"], capabilities: ["issues.read"] };
-      writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: plugin.packageName, version: "1.0.0", type: "module", paperclipPlugin: { manifest: "dist/manifest.js", worker: "dist/worker.js" } }));
-      writeFileSync(path.join(packageRoot, "dist/manifest.js"), `export default ${JSON.stringify(replacement)};`);
-      writeFileSync(path.join(packageRoot, "dist/worker.js"), "throw new Error('unapproved worker must not start');");
-      const runtime = createRuntimeServices();
-      const startWorker = vi.fn();
-      runtime.workerManager.startWorker = startWorker;
-      mockRegistry.getById.mockResolvedValue(plugin);
-      const loader = pluginLoader({} as Db, { localPluginDir: root, enableLocalFilesystem: false, enableNpmDiscovery: false }, runtime);
-      const result = await loader.loadSingle(plugin.id);
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("capabilities require approval: issues.read");
-      expect(mockRegistry.update).not.toHaveBeenCalled();
-      expect(startWorker).not.toHaveBeenCalled();
-    } finally { rmSync(root, { recursive: true, force: true }); }
-  });
-
   it("does not import an npm fallback for a removed distribution install", async () => {
     const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "distribution-removal-")));
     try {

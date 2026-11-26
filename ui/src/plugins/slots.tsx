@@ -928,6 +928,7 @@ export function PluginSlotMount({
 type PluginSlotOutletProps = {
   slotTypes: PluginUiSlotType[];
   context: PluginSlotContext;
+  pluginKey?: string;
   entityType?: PluginUiSlotEntityType | null;
   className?: string;
   itemClassName?: string;
@@ -943,6 +944,7 @@ type PluginSlotOutletProps = {
 export function PluginSlotOutlet({
   slotTypes,
   context,
+  pluginKey,
   entityType,
   className,
   itemClassName,
@@ -954,11 +956,12 @@ export function PluginSlotOutlet({
     companyId: context.companyId,
   });
 
-  if (slots.length === 0) return null;
+  const visibleSlots = pluginKey ? slots.filter((slot) => slot.pluginKey === pluginKey) : slots;
+  if (visibleSlots.length === 0) return null;
 
   return (
     <div className={className}>
-      {slots.map((slot) => (
+      {visibleSlots.map((slot) => (
         <PluginSlotMount
           key={`${slot.pluginKey}:${slot.id}`}
           slot={slot}

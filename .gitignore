@@ -46,7 +46,6 @@ cli/package.dev.json
 server/src/**/*.js
 server/src/**/*.js.map
 server/src/**/*.d.ts
-!server/src/types/express-actor.d.ts
 server/src/**/*.d.ts.map
 tmp/
 feedback-export-*

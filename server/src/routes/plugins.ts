@@ -2362,51 +2362,6 @@ export function pluginRoutes(
     }
   });
 
-  router.get("/plugins/:pluginId/upgrade-preview", async (req, res) => {
-    assertInstanceAdmin(req);
-    assertPluginManagementVisible();
-    const plugin = await resolvePlugin(registry, req.params.pluginId);
-    if (!plugin) { res.status(404).json({ error: "Plugin not found" }); return; }
-    try { res.json(await lifecycle.previewUpgrade(plugin.id)); }
-    catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
-  });
-
-  router.post("/plugins/:pluginId/approve-upgrade", async (req, res) => {
-    assertInstanceAdmin(req);
-    assertPluginManagementVisible();
-    const plugin = await resolvePlugin(registry, req.params.pluginId);
-    if (!plugin) { res.status(404).json({ error: "Plugin not found" }); return; }
-    const digest = req.body?.expectedManifestDigest;
-    if (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest)) {
-      res.status(400).json({ error: "expectedManifestDigest must be a SHA-256 hex digest" }); return;
-    }
-    try {
-      const result = await lifecycle.approveUpgrade(plugin.id, digest);
-      await logPluginMutationActivity(req, "plugin.upgraded", plugin.id, {
-        pluginId: plugin.id, pluginKey: plugin.pluginKey, previousVersion: plugin.version,
-        version: result.version, approvedManifestDigest: digest,
-      });
-      publishGlobalLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "upgraded" } });
-      res.json(result);
-    } catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
-  });
-
-  router.post("/plugins/:pluginId/cancel-upgrade", async (req, res) => {
-    assertInstanceAdmin(req);
-    assertPluginManagementVisible();
-    const plugin = await resolvePlugin(registry, req.params.pluginId);
-    if (!plugin) { res.status(404).json({ error: "Plugin not found" }); return; }
-    try {
-      const result = await lifecycle.cancelUpgrade(plugin.id);
-      await logPluginMutationActivity(req, "plugin.upgraded", plugin.id, {
-        pluginId: plugin.id, pluginKey: plugin.pluginKey, previousVersion: plugin.version,
-        version: result.version, cancelled: true,
-      });
-      publishGlobalLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "upgraded" } });
-      res.json(result);
-    } catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : String(err) }); }
-  });
-
   // ===========================================================================
   // Plugin configuration routes
   // ===========================================================================

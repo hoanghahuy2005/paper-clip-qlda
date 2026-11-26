@@ -723,10 +723,19 @@ describeEmbeddedPostgres("plugin database namespaces", () => {
     const staleManifest = manifest("paperclip.refresh");
     const refreshedManifest: PaperclipPluginManifestV1 = {
       ...staleManifest,
+      capabilities: [...staleManifest.capabilities, "agent.tools.register"],
       database: {
         ...staleManifest.database!,
         coreReadTables: ["companies"],
       },
+      tools: [
+        {
+          name: "db-smoke",
+          displayName: "DB Smoke",
+          description: "Exercises plugin tool registration worker lookup.",
+          parametersSchema: { type: "object", properties: {} },
+        },
+      ],
     };
     const namespace = derivePluginDatabaseNamespace(refreshedManifest.id);
     const packageRoot = await createInstallablePluginPackage(
@@ -798,6 +807,13 @@ describeEmbeddedPostgres("plugin database namespaces", () => {
           database: expect.objectContaining({ coreReadTables: ["companies"] }),
         }),
       }),
+    );
+    expect(toolDispatcher.registerPluginTools).toHaveBeenCalledWith(
+      refreshedManifest.id,
+      expect.objectContaining({
+        tools: refreshedManifest.tools,
+      }),
+      pluginId,
     );
     const [plugin] = await db
       .select()
